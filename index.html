@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { margin: 0; background: #000; }
+    video.input_video {
+      display: block;
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      object-fit: cover;
+      opacity: 0.2;
+    }
+    canvas.output_canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+    }
+    #downloadBtn { position: absolute; top: 20px; right: 20px; z-index: 10; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div class="container">
+    <video class="input_video"></video>
+    <canvas class="output_canvas" width="1280" height="720"></canvas>
+    <button id="downloadBtn" style="display:none;">Download Image</button>
+  </div>
+  <h1 id="selfieCount" style="position: absolute; top: 20px; right: 20px; z-index: 10; font-size:50px;">0</h1>
+  <div id="selfieClickEffect" style=" display: none; position: absolute; top: 0; width: 100vw; height: 100vh; background: rgba(24, 1, 1, 0.8);"></div>
+</body>
+<script type="module">
+const videoElement = document.getElementsByClassName('input_video')[0];
+const canvasElement = document.getElementsByClassName('output_canvas')[0];
+const canvasCtx = canvasElement.getContext('2d');
+const downloadBtn = document.getElementById('downloadBtn');
+const selfieCount = document.getElementById('selfieCount');
+const selfieClickEffect = document.getElementById('selfieClickEffect');
+let selfieCountValue = 0;
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function isFingerUp(landmarks, tipIndex, pipIndex) {
+  return landmarks[tipIndex].y < landmarks[pipIndex].y;
+}
+
+function isVSign(landmarks) {
+  const indexUp = isFingerUp(landmarks, 8, 6);
+  const middleUp = isFingerUp(landmarks, 12, 10);
+  const ringDown = !isFingerUp(landmarks, 16, 14);
+  const pinkyDown = !isFingerUp(landmarks, 20, 18);
+
+  const indexMiddleDist = distance(landmarks[8], landmarks[12]);
+  const fingersApart = indexMiddleDist > 0.08; // stricter distance
+
+  const isV = indexUp && middleUp && ringDown && pinkyDown && fingersApart;
+  console.log('isVSign:', isV);
+  return isV;
+}
+
+function captureImage() {
+  const link = document.createElement('a');
+  link.download = 'v_sign_capture.png';
+  link.href = canvasElement.toDataURL();
+  link.click();
+}
+
+let vSignCooldown = false;
+let drawing = false;
+let lastX = null;
+let lastY = null;
+
+function onResults(results) {
+  canvasCtx.save();
+  canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+  if (results.multiHandLandmarks) {
+    for (const landmarks of results.multiHandLandmarks) {
+      drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 5 });
+      drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 2 });
+
+      const indexTip = landmarks[8];
+      const indexX = indexTip.x * canvasElement.width;
+      const indexY = indexTip.y * canvasElement.height;
+
+      if (isFingerUp(landmarks, 8, 6)) {
+        if (lastX !== null && lastY !== null) {
+          canvasCtx.beginPath();
+          canvasCtx.strokeStyle = 'cyan';
+          canvasCtx.lineWidth = 4;
+          canvasCtx.moveTo(lastX, lastY);
+          canvasCtx.lineTo(indexX, indexY);
+          canvasCtx.stroke();
+        }
+        lastX = indexX;
+        lastY = indexY;
+        drawing = true;
+      } else {
+        drawing = false;
+        lastX = null;
+        lastY = null;
+      }
+
+      if (!vSignCooldown && isVSign(landmarks)) {
+        console.log('V SIGN DETECTED');
+        canvasCtx.fillStyle = 'rgba(255, 0, 0, 0.6)';
+        canvasCtx.font = '48px sans-serif';
+        canvasCtx.fillText('V SIGN DETECTED', 50, 100);
+        // setTimeout(() => captureImage(), 2000);
+        vSignCooldown = true;
+        const selfieCountInterval = setInterval(() =>{
+                selfieCountValue++;
+                selfieCount.textContent = selfieCountValue;
+                console.log("start")
+            }, 1000);
+       
+        selfieCount.textContent = selfieCountValue;
+        setTimeout(() =>{
+            clearInterval(selfieCountInterval);
+            selfieClickEffect.style.display = 'block';
+            captureImage();
+            setTimeout(() =>{
+                selfieClickEffect.style.display = 'none';
+            }, 500);
+        }, 3000);
+      }
+    }
+  } else {
+    lastX = null;
+    lastY = null;
+    console.log('No hands detected');
+  }
+  canvasCtx.restore();
+}
+
+const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.6
+});
+hands.onResults(onResults);
+
+const camera = new Camera(videoElement, {
+  onFrame: async () => await hands.send({ image: videoElement }),
+  width: 1280,
+  height: 820
+});
+camera.start().catch(err => {
+  console.error('Camera failed to start', err);
+  alert('Camera access is required for this app to work.');
+});
+</script>
+</html>
